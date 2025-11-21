@@ -42,9 +42,9 @@ artifacts/*.csv
 !artifacts/.gitkeep
 
 # Data
-data/
-*.csv.gz
-*.csv
+# data/
+# *.csv.gz
+# *.csv
 
 # Logs
 *.log
