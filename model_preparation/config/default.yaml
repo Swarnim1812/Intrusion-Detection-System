@@ -1,0 +1,92 @@
+# Jharkhand-IDS Configuration File
+# ML Pipeline Configuration for Intrusion Detection System
+
+# Data paths
+data:
+  train_path: null  # Set to CSV path or null to use example dataset
+  test_path: null   # Optional: separate test set
+  example_dataset: false  # If true, generates synthetic example data
+  cicids2017_dir: "full_dataset/MachineLearningCVE"  # Path to CICIDS2017 folder
+  use_cicids: true  # Use CICIDS2017 for real evaluation
+  example_dataset: false  # Disable example dataset
+
+# Preprocessing
+preprocessing:
+  drop_na_threshold: 0.5  # Drop columns with >50% missing values
+  fill_na_strategy: "median"  # Options: mean, median, mode, zero
+  remove_duplicates: true
+  normalize: true  # Apply StandardScaler
+
+# Feature Engineering
+feature_engineering:
+  remove_low_variance: true
+  variance_threshold: 0.01
+  feature_selection: false  # Set to true to enable feature selection
+  n_features: 50  # Number of features to select if feature_selection is true
+
+# Model configuration
+model:
+  name: "RandomForest"  # Options: DecisionTree, RandomForest, IsolationForest
+  random_state: 42
+  test_size: 0.2
+  validation_size: 0.1  # From training set
+  cv_folds: 5  # Cross-validation folds
+  
+  # DecisionTree hyperparameters
+  decision_tree:
+    max_depth: 20
+    min_samples_split: 5
+    min_samples_leaf: 2
+    criterion: "gini"
+  
+  # RandomForest hyperparameters
+  random_forest:
+    n_estimators: 100  # Good balance for performance
+    max_depth: 20  # Good depth for complex patterns
+    min_samples_split: 5
+    min_samples_leaf: 2
+    criterion: "gini"
+    max_features: "sqrt"
+    n_jobs: -1
+  
+  # IsolationForest hyperparameters (for anomaly detection)
+  isolation_forest:
+    n_estimators: 100
+    contamination: 0.1  # Expected proportion of anomalies
+    max_features: 1.0
+    n_jobs: -1
+
+# Training
+training:
+  fast_mode: false  # Set to false for better model performance
+  save_model: true
+  save_preprocessor: true
+  save_features: true
+  balance_classes: false  # DEPRECATED: Use balance_strategy instead
+  balance_strategy: "none"  # Options: "none", "undersample", "oversample", "smote"
+  use_day_based_split: true  # If true, uses day-based split (Mon-Thu train, Fri test) for CICIDS2017
+  
+
+# Evaluation
+evaluation:
+  save_report: true
+  save_plots: true
+  plot_format: "png"  # Options: png, pdf, svg
+  metrics: ["accuracy", "precision", "recall", "f1", "roc_auc"]
+
+# Paths
+paths:
+  artifacts_dir: "artifacts"
+  model_file: "artifacts/model.joblib"
+  preprocessor_file: "artifacts/preprocessor.joblib"
+  features_file: "artifacts/features.json"
+  report_file: "artifacts/report.html"
+  variance_selector_file: "artifacts/variance_selector.joblib"
+  feature_selector_file: "artifacts/feature_selector.joblib"
+
+# Logging
+logging:
+  level: "INFO"  # Options: DEBUG, INFO, WARNING, ERROR
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  file: null  # Set to path for file logging, null for console only
+

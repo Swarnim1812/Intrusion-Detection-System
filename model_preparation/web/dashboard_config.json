@@ -1,0 +1,143 @@
+{
+  "charts": [
+    {
+      "type": "bar_chart",
+      "name": "Bar Chart",
+      "description": "Bar charts display categorical data with rectangular bars. Useful for comparing metrics like accuracy, precision, recall, and F1 score side by side.",
+      "depends_on_metric": ["accuracy", "precision", "recall", "f1"],
+      "text_description": "Bar charts are ideal for comparing different metrics. Selecting this option will display a bar chart comparing accuracy, precision, recall, and F1 score. Increasing recall highlights the model's ability to detect attacks, while precision shows how many detected attacks are actually real. This visualization helps you understand the trade-offs between different performance metrics."
+    },
+    {
+      "type": "pie_chart",
+      "name": "Pie Chart",
+      "description": "Pie charts show proportions of a whole. Perfect for visualizing the distribution of normal vs attack classifications.",
+      "depends_on_metric": ["accuracy"],
+      "text_description": "Selecting this option will change the visualization to a pie chart showing the proportion of normal vs attack traffic. Pie charts help visualize the ratio of normal traffic to attacks. A larger attack slice indicates more threats detected in your network. This view is useful for understanding the overall threat landscape."
+    },
+    {
+      "type": "heatmap",
+      "name": "Heatmap",
+      "description": "Heatmaps use color intensity to represent values. The confusion matrix heatmap shows true vs predicted classifications.",
+      "depends_on_metric": ["accuracy"],
+      "text_description": "Selecting this option will display a heatmap visualization, typically showing the confusion matrix. Heatmaps use color intensity to represent values - darker colors indicate higher counts. This helps you see where the model performs well (diagonal elements) or struggles (off-diagonal elements). The confusion matrix reveals exactly how many predictions were correct or incorrect for each class."
+    },
+    {
+      "type": "roc_curve",
+      "name": "ROC Curve",
+      "description": "ROC (Receiver Operating Characteristic) curves plot True Positive Rate vs False Positive Rate. The area under the curve (AUC) indicates model performance.",
+      "depends_on_metric": ["roc_auc"],
+      "text_description": "Selecting this option will display the ROC curve, which shows the trade-off between detecting attacks (true positives) and false alarms (false positives). A curve closer to the top-left corner indicates better performance. The area under the curve (AUC) is a single number summarizing overall model performance - values closer to 1.0 mean the model can better distinguish between normal and attack traffic."
+    },
+    {
+      "type": "confusion_matrix",
+      "name": "Confusion Matrix",
+      "description": "Confusion matrices show the breakdown of predictions: True Positives, True Negatives, False Positives, and False Negatives.",
+      "depends_on_metric": ["accuracy"],
+      "text_description": "Selecting this option will display the confusion matrix, which reveals exactly where your model makes mistakes. The matrix shows four categories: True Positives (correctly identified attacks), True Negatives (correctly identified normal traffic), False Positives (false alarms), and False Negatives (missed attacks). High values on the diagonal mean accurate predictions, while off-diagonal values show misclassifications. This helps you understand the specific types of errors your model makes."
+    }
+  ],
+  "metrics": {
+    "accuracy": {
+      "name": "Accuracy",
+      "description": "Overall percentage of correct predictions (both normal and attack classifications).",
+      "interpretation": "Higher accuracy means the model correctly classifies more network flows overall."
+    },
+    "precision": {
+      "name": "Precision",
+      "description": "Of all predicted attacks, how many were actually attacks?",
+      "interpretation": "High precision means fewer false alarms - when the model says 'attack', it's usually correct."
+    },
+    "recall": {
+      "name": "Recall",
+      "description": "Of all actual attacks, how many did the model detect?",
+      "interpretation": "High recall means the model catches most real attacks, reducing the risk of missing threats."
+    },
+    "f1": {
+      "name": "F1 Score",
+      "description": "Harmonic mean of precision and recall, balancing both metrics.",
+      "interpretation": "F1 score provides a single number that balances precision and recall, useful when both are important."
+    },
+    "roc_auc": {
+      "name": "ROC-AUC",
+      "description": "Area Under the ROC Curve, measuring the model's ability to distinguish between normal and attack traffic.",
+      "interpretation": "AUC closer to 1.0 means the model can better separate attacks from normal traffic."
+    }
+  },
+  "user_input_fields": {
+    "description": "Adjusting input values will change the model's predicted outcome. For example, higher flow duration or suspicious flag patterns may increase the likelihood of an attack. Each feature value influences the final prediction, and the model considers all features together to make its decision.",
+    "fields": [
+      {
+        "name": "Flow Duration",
+        "description": "Duration of the network flow in seconds. Longer durations may indicate suspicious activity such as slow attacks or data exfiltration attempts.",
+        "type": "numeric",
+        "impact": "Higher values may increase attack probability"
+      },
+      {
+        "name": "Total Packets",
+        "description": "Total number of packets in the flow. Unusually high packet counts may signal DDoS attacks or port scanning activities.",
+        "type": "numeric",
+        "impact": "Extremely high values often correlate with attacks"
+      },
+      {
+        "name": "Protocol",
+        "description": "Network protocol used (TCP, UDP, ICMP, etc.). Some protocols are more commonly associated with attacks, though protocol alone is not a strong indicator.",
+        "type": "categorical",
+        "impact": "Certain protocol combinations may be suspicious"
+      },
+      {
+        "name": "Packet Length",
+        "description": "Average or total length of packets. Unusual packet sizes may indicate malicious payloads or fragmentation attacks.",
+        "type": "numeric",
+        "impact": "Anomalous packet sizes can trigger attack detection"
+      },
+      {
+        "name": "Flow Flags",
+        "description": "TCP flags or connection state indicators. Suspicious flag combinations (e.g., SYN without ACK) may indicate port scanning or SYN flood attacks.",
+        "type": "categorical",
+        "impact": "Unusual flag patterns are strong attack indicators"
+      }
+    ],
+    "general_note": "The model analyzes all features together. A single unusual value may not trigger an attack classification, but combinations of suspicious characteristics increase the likelihood. Adjusting multiple features simultaneously will show how different network flow patterns affect the prediction."
+  },
+  "attack_types": {
+    "description": "CICIDS2017 dataset includes the following attack types, all mapped to binary classification (Attack=1):",
+    "types": [
+      "BENIGN (Normal)",
+      "FTP-BruteForce",
+      "SSH-BruteForce",
+      "DoS Hulk",
+      "DoS GoldenEye",
+      "DoS Slowloris",
+      "DoS Slowhttptest",
+      "Heartbleed",
+      "Web Attack - Brute Force",
+      "Web Attack - XSS",
+      "Web Attack - SQL Injection",
+      "Infiltration",
+      "Botnet",
+      "DDoS",
+      "PortScan"
+    ]
+  },
+  "evaluation_modes": {
+    "description": "Choose how the model was evaluated. This affects the accuracy and reliability of the metrics.",
+    "modes": [
+      {
+        "value": "day_based",
+        "name": "Day-wise Split (Recommended)",
+        "description": "Training on Monday-Thursday, testing on Friday. Prevents data leakage and provides realistic IDS performance evaluation.",
+        "help_text": "Day-wise split prevents leakage and gives realistic IDS performance. The model must generalize to unseen attack patterns from Friday, which is more challenging and provides a true measure of real-world performance. This is the recommended evaluation method for CICIDS2017.",
+        "accuracy_note": "Accuracy may be lower but more realistic, as the model must handle unseen attack patterns."
+      },
+      {
+        "value": "random",
+        "name": "Random Split (NOT Recommended)",
+        "description": "Random shuffling of all data before train-test split. May cause data leakage and inflate accuracy.",
+        "help_text": "Random split (NOT recommended, inflated accuracy) mixes data from different days, which can cause data leakage. The model may see similar patterns in both training and testing, leading to artificially high accuracy that doesn't reflect real-world performance. Use this only for quick experiments, not for production evaluation.",
+        "accuracy_note": "Accuracy may be artificially high due to data leakage across days."
+      }
+    ],
+    "default": "day_based"
+  }
+}
+
