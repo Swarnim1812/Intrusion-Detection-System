@@ -74,18 +74,6 @@ const LastIntrusionCard = ({ recentEvent, isLoading }) => {
           </p>
         </div>
         
-        <div>
-          <p className="text-sm text-gray-600 mb-1">Confidence</p>
-          <div className="flex items-center gap-2">
-            <p className="text-lg font-semibold text-gray-800">{confidence}%</p>
-            <div className="flex-1 bg-gray-200 rounded-full h-2">
-              <div
-                className="bg-red-500 h-2 rounded-full transition-all duration-500"
-                style={{ width: `${Math.min(100, parseFloat(confidence) || 0)}%` }}
-              />
-            </div>
-          </div>
-        </div>
       </div>
     </div>
   )

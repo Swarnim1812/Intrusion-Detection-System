@@ -27,6 +27,8 @@ CORS(app)  # Enable CORS for frontend
 
 # Paths to artifacts
 ARTIFACTS_DIR = model_preparation_dir / 'artifacts'
+# DATASET_DIR = model_preparation_dir / 'full_dataset' / 'TrafficLabelling'/'Friday-WorkingHours-Afternoon-DDos.pcap_ISCX.csv'
+DATASET_DIR = model_preparation_dir / 'full_dataset' / 'TrafficLabelling'/'Friday-WorkingHours-Afternoon-PortScan.pcap_ISCX.csv'
 MODEL_PATH = ARTIFACTS_DIR / 'model.joblib'
 PREPROCESSOR_PATH = ARTIFACTS_DIR / 'preprocessor.joblib'
 FEATURES_PATH = ARTIFACTS_DIR / 'features.json'
@@ -36,7 +38,27 @@ model = None
 preprocessor = None
 feature_names = []
 
+def filter_dataset_by_time_and_attack(df, time_range, attack_type):
+    df = df.copy()
+    df.columns = df.columns.str.strip()
 
+    # Timestamp parsing
+    df["Timestamp"] = pd.to_datetime(df["Timestamp"], errors="coerce")
+    df = df.dropna(subset=["Timestamp"])
+
+    # TIME RANGE FILTER
+    days_map = {"7d": 7, "30d": 30, "90d": 90}
+    days = days_map.get(time_range, 7)
+
+    max_time = df["Timestamp"].max()
+    min_time = max_time - pd.Timedelta(days=days)
+    df = df[df["Timestamp"] >= min_time]
+
+    # ATTACK TYPE FILTER
+    if attack_type != "all":
+        df = df[df["Label"].str.contains(attack_type, case=False, na=False)]
+
+    return df
 def clean_json(obj):
     """Clean JSON object, replacing Infinity/NaN with 0 for numeric values"""
     if isinstance(obj, list):
@@ -101,6 +123,87 @@ def load_artifacts():
         # Normalize all training features so backend and frontend match
         feature_names = [normalize(f) for f in raw_features]
 
+        
+        
+        
+        global attack_type_counts
+        global full_df
+        global total_normal, total_attack
+        full_df = None
+        total_normal = 0
+        total_attack = 0
+
+        attack_type_counts = {}
+
+        # Your CSVs should be here:
+        data_dir = model_preparation_dir / 'full_dataset' / 'TrafficLabelling'
+
+        all_files = list(data_dir.glob("*.csv"))
+        if not all_files:
+            print("✗ No dataset files found in:", data_dir)
+        else:
+            print(f"✓ Found {len(all_files)} CICIDS2017 CSV files → combining...")
+
+            dfs = []
+            for file in all_files:
+                try:
+                    # df = pd.read_csv(file)
+                    df = pd.read_csv(
+                        file,
+                        usecols=lambda col: col.strip() in ["Label", "Timestamp"],
+                        dtype=str  # avoid auto-conversion and reduce memory
+                    )
+                    # Remove leading/trailing spaces from ALL column names
+                    df.columns = df.columns.str.strip()
+
+                    dfs.append(df)
+                except Exception as e:
+                    print(f"✗ Failed reading {file.name}: {e}")
+
+            if dfs:
+                full_df = pd.concat(dfs, ignore_index=True)
+                full_df.columns = full_df.columns.str.strip()
+                print("✓ Combined dataset shape =", full_df.shape)
+
+                # convert timestamp safely
+                if "Timestamp" in full_df.columns:
+                    full_df["Timestamp"] = pd.to_datetime(full_df["Timestamp"], errors="coerce")
+
+                # drop rows missing label or timestamp
+                full_df = full_df.dropna(subset=["Label", "Timestamp"])
+
+                # Find the correct label column dynamically
+                possible_labels = ["Label", "label", "Attack", "attack", "Attack_type"]
+
+                label_col = None
+                for col in full_df.columns:
+                    if col.strip() in possible_labels:
+                        label_col = col
+                        break
+
+                if label_col is None:
+                    print("✗ No label column found in dataset!")
+                else:
+                    print(f"✓ Using label column → '{label_col}'")
+
+                    # Count only attacks (exclude BENIGN)
+                    full_df[label_col] = full_df[label_col].astype(str)
+                    attack_df = full_df[full_df[label_col] != "BENIGN"]
+
+                    attack_type_counts = attack_df[label_col].value_counts().to_dict()
+
+                    print("✓ Real attack type frequencies loaded:")
+                    print(attack_type_counts)
+                    
+                    total_normal = (full_df[label_col] == "BENIGN").sum()
+                    total_attack = (full_df[label_col] != "BENIGN").sum()
+
+                    print("✓ Normal traffic count:", total_normal)
+                    print("✓ Attack traffic count:", total_attack)
+        
+        
+        
+        
         print(f"✓ Loaded {len(feature_names)} NORMALIZED features")
 
     except Exception as e:
@@ -390,7 +493,7 @@ def get_metrics():
         
         if not metrics_path.exists():
             # Fallback to parsing HTML report
-            from backend.metrics_parser import generate_metrics_json
+            from metrics_parser import generate_metrics_json
             metrics = generate_metrics_json(ARTIFACTS_DIR)
             
             if not metrics or all(v == 0.0 for k, v in metrics.items() if k != 'roc_auc'):
@@ -423,15 +526,93 @@ def get_metrics():
         return jsonify({'error': str(e)}), 500
 
 
+# @app.route('/dataset-stats', methods=['GET'])
+# def get_dataset_stats():
+#     """
+#     Get dataset statistics including total rows, benign count, attack count, attack types
+#     """
+#     try:
+#         metrics_path = ARTIFACTS_DIR / 'metrics.json'
+        
+#         if not metrics_path.exists():
+#             return jsonify({
+#                 'total_rows': 0,
+#                 'benign_count': 0,
+#                 'attack_count': 0,
+#                 'attack_types': [],
+#                 'attacks_last_24h': 0,
+#                 'total_flows_last_24h': 0,
+#             })
+        
+#         # Load metrics.json
+#         with open(metrics_path, 'r') as f:
+#             raw = f.read()
+        
+#         # Replace invalid JSON values
+#         raw = raw.replace("Infinity", "null")
+#         raw = raw.replace("-Infinity", "null")
+#         raw = raw.replace("NaN", "null")
+        
+#         metrics_data = json.loads(raw)
+        
+#         # Extract data from metrics
+#         confusion_matrix = metrics_data.get('confusion_matrix', [[0, 0], [0, 0]])
+#         per_class = metrics_data.get('per_class', {})
+        
+#         # Calculate totals from confusion matrix
+#         # confusion_matrix format: [[TN, FP], [FN, TP]]
+#         tn = confusion_matrix[0][0] if len(confusion_matrix) > 0 and len(confusion_matrix[0]) > 0 else 0
+#         fp = confusion_matrix[0][1] if len(confusion_matrix) > 0 and len(confusion_matrix[0]) > 1 else 0
+#         fn = confusion_matrix[1][0] if len(confusion_matrix) > 1 and len(confusion_matrix[1]) > 0 else 0
+#         tp = confusion_matrix[1][1] if len(confusion_matrix) > 1 and len(confusion_matrix[1]) > 1 else 0
+        
+#         total_rows = tn + fp + fn + tp
+#         benign_count = tn + fp  # Class 0 (normal)
+#         attack_count = fn + tp  # Class 1 (attack)
+        
+#         # Get attack types (simplified - CICIDS2017 has multiple attack types but we use binary classification)
+#         attack_types = ['BENIGN', 'ATTACK']
+        
+#         # Calculate 24h stats (estimate from confusion matrix)
+#         # Use a small percentage of total for "last 24h"
+#         attacks_last_24h = max(0, int(attack_count * 0.01))  # 1% of total attacks
+#         total_flows_last_24h = max(0, int(total_rows * 0.01))  # 1% of total flows
+        
+#         result = {
+#             'total_rows': int(total_rows) if total_rows else 0,
+#             'benign_count': int(benign_count) if benign_count else 0,
+#             'attack_count': int(attack_count) if attack_count else 0,
+#             'attack_types': attack_types,
+#             'attacks_last_24h': attacks_last_24h,
+#             'total_flows_last_24h': total_flows_last_24h,
+#         }
+        
+#         # Clean any Infinity/NaN values
+#         result = clean_json(result)
+        
+#         return jsonify(result)
+    
+#     except Exception as e:
+#         print(f"Error getting dataset stats: {e}")
+#         return jsonify({
+#             'total_rows': 0,
+#             'benign_count': 0,
+#             'attack_count': 0,
+#             'attack_types': [],
+#             'attacks_last_24h': 0,
+#             'total_flows_last_24h': 0,
+#         })
+
+
 @app.route('/dataset-stats', methods=['GET'])
 def get_dataset_stats():
     """
-    Get dataset statistics including total rows, benign count, attack count, attack types
+    Real dataset statistics using full_df loaded in load_artifacts()
     """
+    global full_df, total_attack, total_normal
+
     try:
-        metrics_path = ARTIFACTS_DIR / 'metrics.json'
-        
-        if not metrics_path.exists():
+        if full_df is None or full_df.empty:
             return jsonify({
                 'total_rows': 0,
                 'benign_count': 0,
@@ -440,57 +621,35 @@ def get_dataset_stats():
                 'attacks_last_24h': 0,
                 'total_flows_last_24h': 0,
             })
-        
-        # Load metrics.json
-        with open(metrics_path, 'r') as f:
-            raw = f.read()
-        
-        # Replace invalid JSON values
-        raw = raw.replace("Infinity", "null")
-        raw = raw.replace("-Infinity", "null")
-        raw = raw.replace("NaN", "null")
-        
-        metrics_data = json.loads(raw)
-        
-        # Extract data from metrics
-        confusion_matrix = metrics_data.get('confusion_matrix', [[0, 0], [0, 0]])
-        per_class = metrics_data.get('per_class', {})
-        
-        # Calculate totals from confusion matrix
-        # confusion_matrix format: [[TN, FP], [FN, TP]]
-        tn = confusion_matrix[0][0] if len(confusion_matrix) > 0 and len(confusion_matrix[0]) > 0 else 0
-        fp = confusion_matrix[0][1] if len(confusion_matrix) > 0 and len(confusion_matrix[0]) > 1 else 0
-        fn = confusion_matrix[1][0] if len(confusion_matrix) > 1 and len(confusion_matrix[1]) > 0 else 0
-        tp = confusion_matrix[1][1] if len(confusion_matrix) > 1 and len(confusion_matrix[1]) > 1 else 0
-        
-        total_rows = tn + fp + fn + tp
-        benign_count = tn + fp  # Class 0 (normal)
-        attack_count = fn + tp  # Class 1 (attack)
-        
-        # Get attack types (simplified - CICIDS2017 has multiple attack types but we use binary classification)
-        attack_types = ['BENIGN', 'ATTACK']
-        
-        # Calculate 24h stats (estimate from confusion matrix)
-        # Use a small percentage of total for "last 24h"
-        attacks_last_24h = max(0, int(attack_count * 0.01))  # 1% of total attacks
-        total_flows_last_24h = max(0, int(total_rows * 0.01))  # 1% of total flows
-        
-        result = {
-            'total_rows': int(total_rows) if total_rows else 0,
-            'benign_count': int(benign_count) if benign_count else 0,
-            'attack_count': int(attack_count) if attack_count else 0,
+
+        # Convert Timestamp to datetime
+        if 'Timestamp' in full_df.columns:
+            full_df['Timestamp'] = pd.to_datetime(full_df['Timestamp'], errors='coerce')
+
+        now = full_df['Timestamp'].max()
+        last_24h = now - pd.Timedelta(hours=24)
+
+        # Filter last 24h traffic
+        df_24h = full_df[full_df['Timestamp'] >= last_24h]
+
+        # Real 24-hour stats
+        total_flows_last_24h = len(df_24h)
+        attacks_last_24h = len(df_24h[df_24h['Label'] != 'BENIGN'])
+
+        # Collect unique attack types
+        attack_types = sorted(full_df['Label'].unique().tolist())
+
+        return jsonify({
+            'total_rows': int(len(full_df)),
+            'benign_count': int(total_normal),
+            'attack_count': int(total_attack),
             'attack_types': attack_types,
-            'attacks_last_24h': attacks_last_24h,
-            'total_flows_last_24h': total_flows_last_24h,
-        }
-        
-        # Clean any Infinity/NaN values
-        result = clean_json(result)
-        
-        return jsonify(result)
-    
+            'attacks_last_24h': int(attacks_last_24h),
+            'total_flows_last_24h': int(total_flows_last_24h),
+        })
+
     except Exception as e:
-        print(f"Error getting dataset stats: {e}")
+        print("Error in /dataset-stats:", e)
         return jsonify({
             'total_rows': 0,
             'benign_count': 0,
@@ -501,165 +660,284 @@ def get_dataset_stats():
         })
 
 
-@app.route('/recent-event', methods=['GET'])
-def get_recent_event():
-    """
-    Get the most recent intrusion event from sample predictions
-    """
-    try:
-        metrics_path = ARTIFACTS_DIR / 'metrics.json'
+
+
+# @app.route('/recent-event', methods=['GET'])
+# def get_recent_event():
+#     """
+#     Get the most recent intrusion event from sample predictions
+#     """
+#     try:
+#         metrics_path = ARTIFACTS_DIR / 'metrics.json'
         
-        if not metrics_path.exists():
-            return jsonify({
-                'label': 0,
-                'timestamp': None,
-                'probability': 0.0,
-                'attack_type': None,
-            })
+#         if not metrics_path.exists():
+#             return jsonify({
+#                 'label': 0,
+#                 'timestamp': None,
+#                 'probability': 0.0,
+#                 'attack_type': None,
+#             })
         
-        # Load metrics.json
-        with open(metrics_path, 'r') as f:
-            raw = f.read()
+#         # Load metrics.json
+#         with open(metrics_path, 'r') as f:
+#             raw = f.read()
         
-        # Replace invalid JSON values
-        raw = raw.replace("Infinity", "null")
-        raw = raw.replace("-Infinity", "null")
-        raw = raw.replace("NaN", "null")
+#         # Replace invalid JSON values
+#         raw = raw.replace("Infinity", "null")
+#         raw = raw.replace("-Infinity", "null")
+#         raw = raw.replace("NaN", "null")
         
-        metrics_data = json.loads(raw)
+#         metrics_data = json.loads(raw)
         
-        # Get sample predictions
-        sample_predictions = metrics_data.get('sample_predictions', [])
+#         # Get sample predictions
+#         sample_predictions = metrics_data.get('sample_predictions', [])
         
-        # Find the most recent attack (label == 1)
-        recent_attack = None
-        for pred in reversed(sample_predictions):
-            if isinstance(pred, dict):
-                label = pred.get('label', pred.get('predicted_label', 0))
-                if label == 1 or label == 'attack' or label == 'Attack':
-                    recent_attack = pred
-                    break
+#         # Find the most recent attack (label == 1)
+#         recent_attack = None
+#         for pred in reversed(sample_predictions):
+#             if isinstance(pred, dict):
+#                 label = pred.get('label', pred.get('predicted_label', 0))
+#                 if label == 1 or label == 'attack' or label == 'Attack':
+#                     recent_attack = pred
+#                     break
         
-        if recent_attack:
-            # Extract data from prediction
-            label = recent_attack.get('label', recent_attack.get('predicted_label', 1))
-            probability = recent_attack.get('probability', recent_attack.get('prob', recent_attack.get('score', 0.0)))
-            timestamp = recent_attack.get('timestamp', recent_attack.get('time', None))
-            attack_type = recent_attack.get('attack_type', recent_attack.get('type', 'Attack'))
+#         if recent_attack:
+#             # Extract data from prediction
+#             label = recent_attack.get('label', recent_attack.get('predicted_label', 1))
+#             probability = recent_attack.get('probability', recent_attack.get('prob', recent_attack.get('score', 0.0)))
+#             timestamp = recent_attack.get('timestamp', recent_attack.get('time', None))
+#             attack_type = recent_attack.get('attack_type', recent_attack.get('type', 'Attack'))
             
-            # Ensure numeric values
-            if probability is None or (isinstance(probability, float) and (np.isnan(probability) or np.isinf(probability))):
-                probability = 0.0
+#             # Ensure numeric values
+#             if probability is None or (isinstance(probability, float) and (np.isnan(probability) or np.isinf(probability))):
+#                 probability = 0.0
             
-            result = {
-                'label': int(label) if label else 1,
-                'timestamp': timestamp if timestamp else None,
-                'probability': float(probability) if probability else 0.0,
-                'attack_type': str(attack_type) if attack_type else 'Attack',
-            }
-        else:
-            # No recent attack found
-            result = {
-                'label': 0,
-                'timestamp': None,
-                'probability': 0.0,
-                'attack_type': None,
-            }
+#             result = {
+#                 'label': int(label) if label else 1,
+#                 'timestamp': timestamp if timestamp else None,
+#                 'probability': float(probability) if probability else 0.0,
+#                 'attack_type': str(attack_type) if attack_type else 'Attack',
+#             }
+#         else:
+#             # No recent attack found
+#             result = {
+#                 'label': 0,
+#                 'timestamp': None,
+#                 'probability': 0.0,
+#                 'attack_type': None,
+#             }
         
-        # Clean any Infinity/NaN values
-        result = clean_json(result)
+#         # Clean any Infinity/NaN values
+#         result = clean_json(result)
         
-        return jsonify(result)
+#         return jsonify(result)
     
-    except Exception as e:
-        print(f"Error getting recent event: {e}")
+#     except Exception as e:
+#         print(f"Error getting recent event: {e}")
+#         return jsonify({
+#             'label': 0,
+#             'timestamp': None,
+#             'probability': 0.0,
+#             'attack_type': None,
+#         })
+
+
+@app.route('/recent-event', methods=['GET'])
+def recent_event():
+    global full_df
+
+    try:
+        if full_df is None or full_df.empty:
+            return jsonify({
+                "timestamp": None,
+                "label": None,
+                "src_ip": None,
+                "dst_ip": None
+            })
+
+        df = full_df
+        df.columns = df.columns.str.strip()
+
+        if "Timestamp" not in df.columns or "Label" not in df.columns:
+            return jsonify({
+                "timestamp": None,
+                "label": None,
+                "src_ip": None,
+                "dst_ip": None
+            })
+
+        # Ensure Timestamp is datetime
+        df["Timestamp"] = pd.to_datetime(df["Timestamp"], errors="coerce")
+
+        # Filter attacks
+        attack_df = df[df["Label"] != "BENIGN"]
+        if attack_df.empty:
+            return jsonify({
+                "timestamp": None,
+                "label": None,
+                "src_ip": None,
+                "dst_ip": None
+            })
+
+        # Sort latest attack
+        latest = attack_df.sort_values("Timestamp", ascending=False).iloc[0]
+
+        # Detect IP column names dynamically
+        src_ip_col = None
+        dst_ip_col = None
+        for col in df.columns:
+            c = col.lower()
+            if "source ip" in c or c == "src_ip" or "src" in c:
+                src_ip_col = col
+            if "destination ip" in c or c == "dst_ip" or "dst" in c:
+                dst_ip_col = col
+
         return jsonify({
-            'label': 0,
-            'timestamp': None,
-            'probability': 0.0,
-            'attack_type': None,
+            "timestamp": str(latest["Timestamp"]),
+            "label": latest["Label"],
+            "src_ip": latest[src_ip_col] if src_ip_col else None,
+            "dst_ip": latest[dst_ip_col] if dst_ip_col else None
+        })
+
+    except Exception as e:
+        print("Error in /recent-event:", e)
+        return jsonify({
+            "timestamp": None,
+            "label": None,
+            "src_ip": None,
+            "dst_ip": None
         })
 
 
-@app.route('/weekly-attacks', methods=['GET'])
-def get_weekly_attacks():
-    """
-    Get weekly attack statistics
-    Returns dict with attack types and their percentages/counts
-    """
-    try:
-        metrics_path = ARTIFACTS_DIR / 'metrics.json'
+# @app.route('/weekly-attacks', methods=['GET'])
+# def get_weekly_attacks():
+#     """
+#     Get weekly attack statistics
+#     Returns dict with attack types and their percentages/counts
+#     """
+#     try:
+#         metrics_path = ARTIFACTS_DIR / 'metrics.json'
         
-        if not metrics_path.exists():
+#         if not metrics_path.exists():
+#             return jsonify({})
+        
+#         # Load metrics.json
+#         with open(metrics_path, 'r') as f:
+#             raw = f.read()
+        
+#         # Replace invalid JSON values
+#         raw = raw.replace("Infinity", "null")
+#         raw = raw.replace("-Infinity", "null")
+#         raw = raw.replace("NaN", "null")
+        
+#         metrics_data = json.loads(raw)
+        
+#         # Get confusion matrix and sample predictions
+#         confusion_matrix = metrics_data.get('confusion_matrix', [[0, 0], [0, 0]])
+#         sample_predictions = metrics_data.get('sample_predictions', [])
+        
+#         # Calculate attack counts from confusion matrix
+#         fn = confusion_matrix[1][0] if len(confusion_matrix) > 1 and len(confusion_matrix[1]) > 0 else 0
+#         tp = confusion_matrix[1][1] if len(confusion_matrix) > 1 and len(confusion_matrix[1]) > 1 else 0
+#         total_attacks = fn + tp
+        
+#         # Count attack types from sample predictions if available
+#         attack_counts = {}
+#         if sample_predictions:
+#             for pred in sample_predictions:
+#                 if isinstance(pred, dict):
+#                     label = pred.get('label', pred.get('predicted_label', 0))
+#                     if label == 1 or label == 'attack' or label == 'Attack':
+#                         attack_type = pred.get('attack_type', pred.get('type', 'ATTACK'))
+#                         attack_type = str(attack_type) if attack_type else 'ATTACK'
+#                         attack_counts[attack_type] = attack_counts.get(attack_type, 0) + 1
+        
+#         # If no attack types found in predictions, use generic types
+#         if not attack_counts:
+#             attack_counts = {
+#                 'ATTACK': total_attacks,
+#             }
+        
+#         # Calculate percentages
+#         total_count = sum(attack_counts.values()) if attack_counts else total_attacks
+#         if total_count == 0:
+#             total_count = 1  # Avoid division by zero
+        
+#         # Build result dict with percentages
+#         result = {}
+#         for attack_type, count in attack_counts.items():
+#             percentage = (count / total_count) * 100
+#             result[attack_type] = {
+#                 'percentage': float(percentage) if not (np.isnan(percentage) or np.isinf(percentage)) else 0.0,
+#                 'count': int(count) if count else 0,
+#             }
+        
+#         # If result is empty, return default
+#         if not result:
+#             result = {
+#                 'ATTACK': {
+#                     'percentage': 100.0,
+#                     'count': int(total_attacks) if total_attacks else 0,
+#                 }
+#             }
+        
+#         # Clean any Infinity/NaN values
+#         result = clean_json(result)
+        
+#         return jsonify(result)
+    
+#     except Exception as e:
+#         print(f"Error getting weekly attacks: {e}")
+#         return jsonify({})
+
+
+@app.route('/weekly-attacks', methods=['GET'])
+def weekly_attacks():
+    global full_df
+
+    try:
+        if full_df is None or full_df.empty:
             return jsonify({})
         
-        # Load metrics.json
-        with open(metrics_path, 'r') as f:
-            raw = f.read()
-        
-        # Replace invalid JSON values
-        raw = raw.replace("Infinity", "null")
-        raw = raw.replace("-Infinity", "null")
-        raw = raw.replace("NaN", "null")
-        
-        metrics_data = json.loads(raw)
-        
-        # Get confusion matrix and sample predictions
-        confusion_matrix = metrics_data.get('confusion_matrix', [[0, 0], [0, 0]])
-        sample_predictions = metrics_data.get('sample_predictions', [])
-        
-        # Calculate attack counts from confusion matrix
-        fn = confusion_matrix[1][0] if len(confusion_matrix) > 1 and len(confusion_matrix[1]) > 0 else 0
-        tp = confusion_matrix[1][1] if len(confusion_matrix) > 1 and len(confusion_matrix[1]) > 1 else 0
-        total_attacks = fn + tp
-        
-        # Count attack types from sample predictions if available
-        attack_counts = {}
-        if sample_predictions:
-            for pred in sample_predictions:
-                if isinstance(pred, dict):
-                    label = pred.get('label', pred.get('predicted_label', 0))
-                    if label == 1 or label == 'attack' or label == 'Attack':
-                        attack_type = pred.get('attack_type', pred.get('type', 'ATTACK'))
-                        attack_type = str(attack_type) if attack_type else 'ATTACK'
-                        attack_counts[attack_type] = attack_counts.get(attack_type, 0) + 1
-        
-        # If no attack types found in predictions, use generic types
-        if not attack_counts:
-            attack_counts = {
-                'ATTACK': total_attacks,
+        df = full_df
+        df.columns = df.columns.str.strip()
+
+        # Detect label + timestamp columns
+        if "Label" not in df.columns or "Timestamp" not in df.columns:
+            return jsonify({})
+
+        # Convert Timestamp to datetime
+        df["Timestamp"] = pd.to_datetime(df["Timestamp"], errors="coerce")
+
+        # Filter last 7 days
+        max_time = df["Timestamp"].max()
+        one_week_ago = max_time - pd.Timedelta(days=7)
+
+        week_df = df[df["Timestamp"] >= one_week_ago]
+
+        # Filter attacks
+        attacks_df = week_df[week_df["Label"] != "BENIGN"]
+
+        if attacks_df.empty:
+            return jsonify({})
+
+        # Count per attack type
+        attack_counts = attacks_df["Label"].value_counts().to_dict()
+        total_attacks = sum(attack_counts.values())
+
+        # Format response
+        weekly_data = {
+            attack_type: {
+                "count": count,
+                "percentage": round((count / total_attacks) * 100, 2)
             }
-        
-        # Calculate percentages
-        total_count = sum(attack_counts.values()) if attack_counts else total_attacks
-        if total_count == 0:
-            total_count = 1  # Avoid division by zero
-        
-        # Build result dict with percentages
-        result = {}
-        for attack_type, count in attack_counts.items():
-            percentage = (count / total_count) * 100
-            result[attack_type] = {
-                'percentage': float(percentage) if not (np.isnan(percentage) or np.isinf(percentage)) else 0.0,
-                'count': int(count) if count else 0,
-            }
-        
-        # If result is empty, return default
-        if not result:
-            result = {
-                'ATTACK': {
-                    'percentage': 100.0,
-                    'count': int(total_attacks) if total_attacks else 0,
-                }
-            }
-        
-        # Clean any Infinity/NaN values
-        result = clean_json(result)
-        
-        return jsonify(result)
-    
+            for attack_type, count in attack_counts.items()
+        }
+
+        return jsonify(weekly_data)
+
     except Exception as e:
-        print(f"Error getting weekly attacks: {e}")
+        print("Error in /weekly-attacks:", e)
         return jsonify({})
 
 
@@ -803,16 +1081,144 @@ def predict_user_input():
         return jsonify({'error': str(e)}), 500
 
 
+# @app.route('/visualize', methods=['POST'])
+# def get_visualization_data():
+#     if model is None:
+#         return jsonify({'error': 'Model not loaded'}), 500
+
+#     try:
+#         data = request.get_json() or {}
+#         metric = data.get('metric', 'accuracy')
+#         chart_type = data.get('chart_type', 'bar')
+#         time_range = data.get('time_range', '7d')
+#         attack_type = data.get('attack_type', 'all')
+
+#         from metrics_parser import generate_metrics_json
+#         metrics = generate_metrics_json(ARTIFACTS_DIR)
+#         # ---- TIME FILTER SIMULATION (real data not present, so scale values) ----
+#         range_scale = {
+#             "7d": 1.0,
+#             "30d": 0.7,
+#             "90d": 0.5,
+#             "1y": 0.3,
+#         }.get(time_range, 1.0)
+
+#         # ---- ATTACK TYPE SIMULATION ----
+#         attack_multiplier = 1
+#         if attack_type != "all":
+#             attack_multiplier = 0.6
+
+#         # Base metric values
+#         # accuracy = metrics.get("accuracy", 0) * range_scale
+#         # precision = metrics.get("precision", 0) * range_scale
+#         recall = metrics.get("recall", 0) * range_scale
+#         # f1 = metrics.get("f1", 0) * range_scale
+        
+#         # Mapping selected metric → actual value
+#         metric_value = {
+#             "accuracy": metrics.get("accuracy", 0),
+#             "precision": metrics.get("precision", 0),
+#             "recall": metrics.get("recall", 0),
+#             "f1": metrics.get("f1", 0),
+#             "roc_auc": metrics.get("roc_auc", 0)
+#         }.get(metric, 0)
+
+
+#         if chart_type == "bar":
+#             chart_data = {
+#                 "labels": [metric.upper()],
+#                 "datasets": [{
+#                     "label": metric.upper(),
+#                     "data": [metric_value],
+#                     "backgroundColor": ["#3b82f6"],
+#                 }],
+#             }
+#         elif chart_type == "line":
+#             chart_data = {
+#                 "labels": ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"],
+#                 "datasets": [{
+#                     "label": metric.upper(),
+#                     "data": [
+#                         metric_value * 0.85,
+#                         metric_value * 0.9,
+#                         metric_value * 1.1,
+#                         metric_value * 1.0,
+#                         metric_value * 1.2,
+#                         metric_value * 1.05,
+#                         metric_value * 0.95,
+#                     ],
+#                     "borderColor": "#3b82f6",
+#                     "backgroundColor": "rgba(59,130,246,0.2)",
+#                     "fill": True,
+#                 }],
+#             }
+#         elif chart_type == "pie":
+#             chart_data = {
+#                 "labels": ["Normal", "Attack"],
+#                 "datasets": [{
+#                     "data": [1-metric_value, metric_value],
+#                     "backgroundColor": ["#10b981", "#ef4444"],
+#                 }],
+#             }
+#         elif chart_type == "heatmap":
+#             global full_df
+
+#             if full_df is None or full_df.empty:
+#                 chart_data = {"labels": [], "data": [[], []]}
+#             else:
+#                 df = full_df.copy()
+#                 df.columns = df.columns.str.strip()
+
+#                 # Convert timestamp column
+#                 df["Timestamp"] = pd.to_datetime(df["Timestamp"], errors="coerce")
+#                 df = df.dropna(subset=["Timestamp", "Label"])
+
+#                 # Filter based on time_range
+#                 max_time = df["Timestamp"].max()
+#                 days_map = {"7d": 7, "30d": 30, "90d": 90}
+#                 days = days_map.get(time_range, 7)
+#                 min_time = max_time - pd.Timedelta(days=days)
+
+#                 df = df[df["Timestamp"] >= min_time]
+
+#                 # Group by day@app.route('/attack-types', methods=['GET'])
+#                 df["DAY"] = df["Timestamp"].dt.date
+
+#                 normal_counts = df[df["Label"] == "BENIGN"].groupby("DAY").size()
+#                 attack_counts = df[df["Label"] != "BENIGN"].groupby("DAY").size()
+
+#                 # Align both arrays
+#                 day_list = sorted(set(normal_counts.index) | set(attack_counts.index))
+
+#                 normal_values = [int(normal_counts.get(day, 0)) for day in day_list]
+#                 attack_values = [int(attack_counts.get(day, 0)) for day in day_list]
+
+#                 chart_data = {
+#                     "labels": [str(day) for day in day_list],
+#                     "data": [
+#                         normal_values,
+#                         attack_values
+#                     ]
+#                 }
+
+
+
+#         return jsonify({
+#             "chart_data": chart_data,
+#             "insight": f"Intrusion activity was {'high' if recall > 0.7 else 'low'} in the last {time_range}.",
+#             "metric": metric,
+#             "chart_type": chart_type
+#         })
+
+#     except Exception as e:
+#         print("Error generating visualization:", e)
+#         return jsonify({"error": str(e)}), 500
+
+
 @app.route('/visualize', methods=['POST'])
 def get_visualization_data():
-    """
-    Get chart-ready data based on user selections
-    Request body: { "metric": "accuracy", "chart_type": "bar", "time_range": "7d", "attack_type": "all" }
-    """
     if model is None:
-        return jsonify({
-            'error': 'Model not loaded'
-        }), 500
+        return jsonify({'error': 'Model not loaded'}), 500
 
     try:
         data = request.get_json() or {}
@@ -820,72 +1226,148 @@ def get_visualization_data():
         chart_type = data.get('chart_type', 'bar')
         time_range = data.get('time_range', '7d')
         attack_type = data.get('attack_type', 'all')
-        
-        # Get base metrics
-        from backend.metrics_parser import generate_metrics_json
-        metrics = generate_metrics_json(ARTIFACTS_DIR)
-        
-        # Generate chart data based on selections
-        chart_data = {}
-        
-        if chart_type == 'bar':
-            # Bar chart of metrics
-            chart_data = {
-                'labels': ['Accuracy', 'Precision', 'Recall', 'F1 Score'],
-                'datasets': [{
-                    'label': 'Model Metrics',
-                    'data': [
-                        metrics.get('accuracy', 0),
-                        metrics.get('precision', 0),
-                        metrics.get('recall', 0),
-                        metrics.get('f1', 0),
-                    ],
-                    'backgroundColor': ['#3b82f6', '#10b981', '#f59e0b', '#ef4444'],
-                }]
-            }
-        
-        elif chart_type == 'pie':
-            # Pie chart of normal vs attack ratio
-            chart_data = {
-                'labels': ['Normal', 'Attack'],
-                'datasets': [{
-                    'data': [75, 25],  # Example - would come from predictions
-                    'backgroundColor': ['#10b981', '#ef4444'],
-                }]
-            }
-        
-        elif chart_type == 'line':
-            # Line chart over time
-            days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
-            chart_data = {
-                'labels': days,
-                'datasets': [{
-                    'label': 'Attacks Detected',
-                    'data': [12, 19, 15, 25, 22, 18, 14],
-                    'borderColor': '#ef4444',
-                    'backgroundColor': 'rgba(239, 68, 68, 0.1)',
-                    'fill': True,
-                }]
-            }
-        
-        elif chart_type == 'heatmap':
-            # Confusion matrix heatmap
-            cm = [[800, 50], [30, 120]]  # Example
-            chart_data = {
-                'labels': ['Normal', 'Attack'],
-                'data': cm,
-            }
-        
-        return jsonify({
-            'chart_data': chart_data,
-            'metric': metric,
-            'chart_type': chart_type,
-        })
-    
-    except Exception as e:
-        print(f"Error generating visualization: {e}")
-        return jsonify({'error': str(e)}), 500
 
+        from metrics_parser import generate_metrics_json
+        metrics = generate_metrics_json(ARTIFACTS_DIR)
+
+        # ---- TIME RANGE MULTIPLIER ----
+        time_scale = {
+            "7d": 1.0,
+            "30d": 0.7,
+            "90d": 0.5,
+        }.get(time_range, 1.0)
+
+        # ---- ATTACK TYPE MULTIPLIER ----
+        # if user filters specific attack type, reduce signal
+        attack_scale = 1.0
+        if attack_type != "all":
+            attack_scale = 0.6
+
+        # ---- FINAL metric value ----
+        metric_value = {
+            "accuracy": metrics.get("accuracy", 0),
+            "precision": metrics.get("precision", 0),
+            "recall": metrics.get("recall", 0),
+            "f1": metrics.get("f1", 0),
+            "roc_auc": metrics.get("roc_auc", 0)
+        }.get(metric, 0)
+
+        # Apply both filters
+        metric_value = metric_value * time_scale * attack_scale
+
+        # ---- BUILD DIFFERENT CHART TYPES ----
+        if chart_type == "bar":
+            chart_data = {
+                "labels": [metric.upper()],
+                "datasets": [{
+                    "label": metric.upper(),
+                    "data": [metric_value],
+                    "backgroundColor": ["#3b82f6"],
+                }],
+            }
+
+        elif chart_type == "line":
+            chart_data = {
+                "labels": ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"],
+                "datasets": [{
+                    "label": metric.upper(),
+                    "data": [
+                        metric_value * 0.8,
+                        metric_value * 1.0,
+                        metric_value * 1.1,
+                        metric_value * 1.05,
+                        metric_value * 1.2,
+                        metric_value * 0.9,
+                        metric_value * 0.95,
+                    ],
+                    "borderColor": "#3b02f6",
+                    "backgroundColor": "rgba(59,130,246,0.3)",
+                    "fill": True,
+                }],
+            }
+
+        elif chart_type == "pie":
+            chart_data = {
+                "labels": ["Normal", "Attack"],
+                "datasets": [{
+                    "data": [1 - metric_value, metric_value],
+                    "backgroundColor": ["#10b981", "#ef4444"],
+                }],
+            }
+
+        elif chart_type == "heatmap":
+            # small synthetic confusion matrix
+            cm = [
+                [800, int(40 * metric_value)],
+                [int(15 * metric_value), int(100 * metric_value)],
+            ]
+            chart_data = {
+                "labels": ["Normal", "Attack"],
+                "data": cm,
+            }
+
+        return jsonify({
+            "chart_data": chart_data,
+            "insight": f"Activity for '{metric}' changed based on {time_range} and {attack_type}.",
+            "metric": metric,
+            "chart_type": chart_type
+        })
+
+    except Exception as e:
+        print("Error generating visualization:", e)
+        return jsonify({"error": str(e)}), 500
+
+
+
+
+
+@app.route('/attack-frequency', methods=['GET'])
+def attack_frequency():
+    print("pointer here")
+    global attack_type_counts
+
+    if attack_type_counts is None:
+        return jsonify({"error": "Attack type frequency not available"}), 500
+    print("###$$$$$", attack_type_counts)
+    labels = list(attack_type_counts.keys())
+    values = list(attack_type_counts.values())
+
+    return jsonify({
+        "labels": labels,
+        "values": values
+    })
+    
+    
+    
+@app.route('/normal-attack-ratio', methods=['GET'])
+def normal_attack_ratio():
+    global total_normal, total_attack
+
+    return jsonify({
+        "normal": int(total_normal),
+        "attack": int(total_attack)
+    })
+
+@app.route('/traffic-counts', methods=['GET'])
+def traffic_counts():
+    global total_normal, total_attack
+    return jsonify({
+        "normal": int(total_normal),
+        "attack": int(total_attack),
+        "total": int(total_normal + total_attack)
+    })
+
+
+
+@app.route('/attack-types', methods=['GET'])
+def get_attack_types():
+    global attack_type_counts
+    types = list(attack_type_counts.keys())
+
+    # Always include BENIGN? No — only attack types
+    return jsonify({
+        "attack_types": types
+    })
 
 if __name__ == '__main__':
     print("=" * 60)

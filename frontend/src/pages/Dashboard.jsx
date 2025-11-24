@@ -38,14 +38,60 @@ ChartJS.register(
 
 const Dashboard = () => {
   const [selectedMetric, setSelectedMetric] = useState('accuracy')
-  const [selectedChartType, setSelectedChartType] = useState('bar')
+  const [selectedChartType, setSelectedChartType] = useState('line')
   const [dateRange, setDateRange] = useState('7d')
   const [selectedAttackType, setSelectedAttackType] = useState('all')
   const [chartData, setChartData] = useState(null)
   const [isLoading, setIsLoading] = useState(false)
   const [metrics, setMetrics] = useState(null)
   const { addToast } = useToast()
+  const [attackFreq, setAttackFreq] = useState({ labels: [], values: [] })
+  const [ratio, setRatio] = useState({ normal: 0, attack: 0 })
+  const [attackTypes, setAttackTypes] = useState([]);
 
+  useEffect(() => {
+    const loadAttackTypes = async () => {
+      try {
+        const res = await fetch("http://localhost:5000/attack-types");
+        const data = await res.json();
+        setAttackTypes(data.attack_types || []);
+      } catch (err) {
+        console.error("Failed to load attack types:", err);
+      }
+    };
+  
+    loadAttackTypes();
+  }, []);
+  
+
+  useEffect(() => {
+    const loadRatio = async () => {
+      try {
+        const res = await fetch('http://localhost:5000/normal-attack-ratio')
+        const data = await res.json()
+        setRatio(data)
+      } catch (err) {
+        console.error("Failed to load normal-attack ratio:", err)
+      }
+    }
+  
+    loadRatio()
+  }, [])
+  
+
+  useEffect(() => {
+    const loadAttackFrequency = async () => {
+      try {
+        const res = await fetch('http://localhost:5000/attack-frequency')
+        const data = await res.json()
+        setAttackFreq(data)
+      } catch (err) {
+        console.error("Failed to load attack frequency", err)
+      }
+    }
+  
+    loadAttackFrequency()
+  }, [])
   useEffect(() => {
     loadMetrics()
     updateChart()
@@ -114,21 +160,20 @@ const Dashboard = () => {
       case 'doughnut':
         return <Doughnut data={chartData} options={commonOptions} />
       case 'heatmap':
-        // For heatmap, we'll use a bar chart with stacked bars
         return (
           <Bar
             data={{
-              labels: chartData.labels,
+              labels: chartData?.labels || [],
               datasets: [
                 {
-                  label: 'Normal',
-                  data: chartData.data[0] || [],
-                  backgroundColor: '#10b981',
+                  label: "Normal",
+                  data: chartData?.data?.[0] || [],
+                  backgroundColor: "#10b981",
                 },
                 {
-                  label: 'Attack',
-                  data: chartData.data[1] || [],
-                  backgroundColor: '#ef4444',
+                  label: "Attack",
+                  data: chartData?.data?.[1] || [],
+                  backgroundColor: "#ef4444",
                 },
               ],
             }}
@@ -141,6 +186,7 @@ const Dashboard = () => {
             }}
           />
         )
+        
       default:
         return <Bar data={chartData} options={commonOptions} />
     }
@@ -175,7 +221,6 @@ const Dashboard = () => {
               <option value="precision">Precision</option>
               <option value="recall">Recall</option>
               <option value="f1">F1 Score</option>
-              <option value="roc_auc">ROC-AUC</option>
             </select>
           </div>
 
@@ -191,10 +236,9 @@ const Dashboard = () => {
               onChange={(e) => setSelectedChartType(e.target.value)}
               className="input-field"
             >
-              <option value="bar">Bar Chart</option>
               <option value="line">Line Chart</option>
+              <option value="bar">Bar Chart</option>
               <option value="pie">Pie Chart</option>
-              <option value="doughnut">Doughnut Chart</option>
               <option value="heatmap">Heatmap</option>
             </select>
           </div>
@@ -214,7 +258,7 @@ const Dashboard = () => {
               <option value="7d">Last 7 days</option>
               <option value="30d">Last 30 days</option>
               <option value="90d">Last 90 days</option>
-              <option value="1y">Last year</option>
+              {/* <option value="1y">Last year</option> */}
             </select>
           </div>
 
@@ -231,16 +275,15 @@ const Dashboard = () => {
               className="input-field"
             >
               <option value="all">All Types</option>
-              <option value="phishing">Phishing</option>
-              <option value="sqli">SQL Injection</option>
-              <option value="ddos">DDoS</option>
-              <option value="leakage">Data Leakage</option>
-              <option value="defacement">Defacement</option>
+              {attackTypes.map((type) => (
+                <option key={type} value={type.toLowerCase()}>
+                  {type}
+                </option>
+              ))}
             </select>
           </div>
         </div>
       </div>
-
       {/* Main Chart */}
       <div className="mb-6" data-aos="fade-up" data-aos-delay="100">
         <ChartCard
@@ -261,20 +304,12 @@ const Dashboard = () => {
           >
             <Bar
               data={{
-                labels: ['Phishing', 'SQLi', 'DDoS', 'Data Leakage', 'Defacement'],
-                datasets: [
-                  {
-                    label: 'Frequency',
-                    data: [45, 32, 28, 15, 10],
-                    backgroundColor: [
-                      '#3b82f6',
-                      '#ef4444',
-                      '#f59e0b',
-                      '#10b981',
-                      '#8b5cf6',
-                    ],
-                  },
-                ],
+                labels: attackFreq.labels,
+                datasets: [{
+                  label: "Frequency",
+                  data: attackFreq.values,
+                  backgroundColor: '#3b02f6',
+                }]
               }}
               options={{
                 maintainAspectRatio: false,
@@ -300,7 +335,7 @@ const Dashboard = () => {
                 labels: ['Normal', 'Attack'],
                 datasets: [
                   {
-                    data: [75, 25],
+                    data: [ratio.normal, ratio.attack],
                     backgroundColor: ['#10b981', '#ef4444'],
                   },
                 ],

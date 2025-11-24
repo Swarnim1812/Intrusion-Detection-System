@@ -15,7 +15,7 @@ const DatasetStats = ({ datasetStats, isLoading }) => {
         const url = window.URL.createObjectURL(data)
         const a = document.createElement('a')
         a.href = url
-        a.download = 'cicids2017_sample_100_rows.csv'
+        a.download = 'cicids2017_sample_10_rows.csv'
         document.body.appendChild(a)
         a.click()
         window.URL.revokeObjectURL(url)

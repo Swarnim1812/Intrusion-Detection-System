@@ -219,7 +219,7 @@ export const getModelOverview = async () => {
 export const getMetrics = async () => {
   try {
     const response = await api.get('/metrics')
-    return response.data
+    return response.data.metrics
   } catch (error) {
     console.error('Metrics error:', error)
     throw new Error(
