@@ -10,7 +10,8 @@ import ChartCard from '../components/ChartCard'
 import MetricsViewer from '../components/MetricsViewer'
 import SampleDataViewer from '../components/SampleDataViewer'
 import { useToast } from '../utils/toastContext'
-import { predict, getModelStats } from '../services/api'
+import { predict, getModelOverview } from '../services/api'
+import { normalizeFeatureName } from '../utils/featureNames'
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -34,7 +35,13 @@ ChartJS.register(
   PointElement,
   LineElement
 )
-
+const normalize = (name) =>
+  name
+    ?.trim()
+    ?.replace(/\s+/g, "_")
+    ?.replace(/\./g, "_")
+    ?.replace(/[^a-zA-Z0-9_]/g, "")
+    ?.toLowerCase();
 const IDS = () => {
   const [activeTab, setActiveTab] = useState('upload')
   const [file, setFile] = useState(null)
@@ -52,10 +59,13 @@ const IDS = () => {
 
   const loadModelInfo = async () => {
     try {
-      const stats = await getModelStats()
-      setModelStats(stats)
-      if (stats.features) {
-        setRequiredFeatures(stats.features)
+      const overview = await getModelOverview()
+      console.log("=== MODEL OVERVIEW ===", overview);
+      setModelStats(overview)
+      if (overview?.features?.length) {
+        setRequiredFeatures(overview.features)
+      } else {
+        setRequiredFeatures([])
       }
     } catch (error) {
       console.warn('Could not load model info:', error)
@@ -77,17 +87,37 @@ const IDS = () => {
     }
 
     setIsLoading(true)
+    console.log("=== CSV DATA (first 2 rows) ===", csvData.slice(0,2));
     try {
       // Convert CSV data to rows format
-      const rows = csvData.map((row) => {
-        const rowObj = {}
-        requiredFeatures.forEach((feat) => {
-          rowObj[feat] = parseFloat(row[feat]) || 0
-        })
-        return rowObj
+    const rows = csvData.map((row) => {
+      const normalizedRow = {}
+      Object.entries(row || {}).forEach(([key, value]) => {
+        const normalizedKey = normalize(key)
+        if (!normalizedKey) return
+        normalizedRow[normalizedKey] = value
       })
 
+      const rowObj = {}
+      // Normalize required features before mapping
+      const normalizedRequired = requiredFeatures.map((f) => normalize(f))
+
+      normalizedRequired.forEach((normalizedFeat, idx) => {
+        const originalFeat = requiredFeatures[idx]
+        const value = normalizedRow[normalizedFeat]
+      
+        // Use normalized key for backend
+        rowObj[normalizedFeat] =
+          value !== undefined && value !== null && value !== ''
+            ? parseFloat(value)
+            : 0
+      })
+      return rowObj
+    })
+    console.log('Prepared rows for prediction (first 3 rows):', rows.slice(0, 3))
+
       const result = await predict(rows, 'batch')
+      console.log("=== PREDICTIONS ===", result);
       setPredictions(result.predictions || [])
       addToast(
         `Predictions complete: ${result.summary?.attacks || 0} attacks detected`,

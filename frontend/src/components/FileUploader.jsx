@@ -46,28 +46,67 @@ const FileUploader = ({ onFileLoaded, requiredFeatures = [] }) => {
 
     Papa.parse(uploadedFile, {
       header: true,
-      preview: 5, // First 5 rows
+      skipEmptyLines: true,
+      dynamicTyping: true,
+      transformHeader: (header) => header?.trim?.() || header,
       complete: (results) => {
-        setPreview(results.data)
-        
-        // Validate columns
+        if (results.errors?.length) {
+          console.error('CSV parsing errors:', results.errors)
+          addToast('Error parsing CSV file. Please check the format.', 'error')
+          return
+        }
+
+        // const cleanedRows = (results.data || []).map((row) => {
+        //   const cleanedRow = {}
+        //   Object.entries(row || {}).forEach(([key, value]) => {
+        //     const trimmedKey = key?.trim?.()
+        //     if (!trimmedKey) return
+        //     cleanedRow[trimmedKey] = value
+        //   })
+        //   return cleanedRow
+        // })
+
+        // SAME normalization used everywhere
+        const normalize = (name) =>
+          name
+            ?.trim()
+            ?.replace(/\s+/g, "_")
+            ?.replace(/\./g, "_")
+            ?.replace(/[^a-zA-Z0-9_]/g, "")
+            ?.toLowerCase();
+
+        const cleanedRows = (results.data || []).map((row) => {
+          const cleanedRow = {}
+          Object.entries(row || {}).forEach(([key, value]) => {
+            const normalizedKey = normalize(key)
+            if (!normalizedKey) return
+            cleanedRow[normalizedKey] = value
+          })
+          return cleanedRow
+        })
+        console.log("=== RAW CSV ROWS (first 2) ===", results.data.slice(0,2));
+        console.log("=== CLEANED + NORMALIZED ROWS (first 2) ===", cleanedRows.slice(0,2));
+        setPreview(cleanedRows.slice(0, 5))
+
         if (requiredFeatures.length > 0) {
-          const csvColumns = Object.keys(results.data[0] || {})
-          const missing = requiredFeatures.filter(
+          const csvColumns = Object.keys(cleanedRows[0] || {})
+          const normalizedRequired = requiredFeatures.map(f => normalize(f))
+
+          const missing = normalizedRequired.filter(
             (feat) => !csvColumns.includes(feat)
           )
           setMissingColumns(missing)
-          
+
           if (missing.length > 0) {
             addToast(
-              `Missing columns: ${missing.slice(0, 3).join(', ')}${missing.length > 3 ? '...' : ''}`,
+              `Missing columnsssss: ${missing.slice(0, 3).join(', ')}${missing.length > 3 ? '...' : ''}`,
               'warning'
             )
           }
         }
-        
+
         if (onFileLoaded) {
-          onFileLoaded(uploadedFile, results.data)
+          onFileLoaded(uploadedFile, cleanedRows)
         }
       },
       error: (error) => {

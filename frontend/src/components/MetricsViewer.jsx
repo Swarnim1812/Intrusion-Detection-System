@@ -64,7 +64,7 @@ const MetricsViewer = () => {
       </div>
     )
   }
-
+  console.log('metrics:::', metrics.metrics)
   if (!metrics) {
     return (
       <div className="card text-center py-8 text-gray-500">
@@ -80,10 +80,10 @@ const MetricsViewer = () => {
       {
         label: 'Score',
         data: [
-          (metrics.accuracy || 0) * 100,
-          (metrics.precision || 0) * 100,
-          (metrics.recall || 0) * 100,
-          (metrics.f1 || 0) * 100,
+          (metrics.metrics.accuracy || 0) * 100,
+          (metrics.metrics.precision || 0) * 100,
+          (metrics.metrics.recall || 0) * 100,
+          (metrics.metrics.f1 || 0) * 100,
         ],
         backgroundColor: ['#3b82f6', '#10b981', '#f59e0b', '#ef4444'],
       },
@@ -125,25 +125,25 @@ const MetricsViewer = () => {
         <div className="card text-center">
           <p className="text-sm text-gray-600 mb-2">Accuracy</p>
           <p className="text-3xl font-bold text-primary-600">
-            {((metrics.accuracy || 0) * 100).toFixed(2)}%
+            {((metrics.metrics.accuracy || 0) * 100).toFixed(2)}%
           </p>
         </div>
         <div className="card text-center">
           <p className="text-sm text-gray-600 mb-2">Precision</p>
           <p className="text-3xl font-bold text-green-600">
-            {((metrics.precision || 0) * 100).toFixed(2)}%
+            {((metrics.metrics.precision || 0) * 100).toFixed(2)}%
           </p>
         </div>
         <div className="card text-center">
           <p className="text-sm text-gray-600 mb-2">Recall</p>
           <p className="text-3xl font-bold text-yellow-600">
-            {((metrics.recall || 0) * 100).toFixed(2)}%
+            {((metrics.metrics.recall || 0) * 100).toFixed(2)}%
           </p>
         </div>
         <div className="card text-center">
           <p className="text-sm text-gray-600 mb-2">F1 Score</p>
           <p className="text-3xl font-bold text-red-600">
-            {((metrics.f1 || 0) * 100).toFixed(2)}%
+            {((metrics.metrics.f1 || 0) * 100).toFixed(2)}%
           </p>
         </div>
       </div>

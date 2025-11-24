@@ -14,6 +14,8 @@ from sklearn.metrics import (
     roc_auc_score, confusion_matrix, classification_report
 )
 
+from src.feature_utils import normalize_feature_name
+
 
 def setup_logging(
     level: str = "INFO",
@@ -55,11 +57,20 @@ def save_features(feature_names: list, filepath: str) -> None:
     """
     filepath = Path(filepath)
     filepath.parent.mkdir(parents=True, exist_ok=True)
+
+    cleaned = []
+    seen = set()
+    for name in feature_names or []:
+        normalized = normalize_feature_name(name)
+        if not normalized or normalized in seen:
+            continue
+        cleaned.append(normalized)
+        seen.add(normalized)
     
     with open(filepath, 'w', encoding='utf-8') as f:
-        json.dump(feature_names, f, indent=2)
+        json.dump(cleaned, f, indent=2)
     
-    logging.info(f"Saved {len(feature_names)} features to {filepath}")
+    logging.info(f"Saved {len(cleaned)} features to {filepath}")
 
 
 def load_features(filepath: str) -> list:
@@ -75,7 +86,7 @@ def load_features(filepath: str) -> list:
     with open(filepath, 'r', encoding='utf-8') as f:
         features = json.load(f)
     
-    return features
+    return [normalize_feature_name(f) for f in features]
 
 
 def save_model(model: Any, filepath: str) -> None:

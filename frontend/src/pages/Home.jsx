@@ -1,20 +1,35 @@
 /**
  * Home page with hero section, key benefits, and animated counters
  * Uses GSAP for animations and AOS for scroll animations
+ * Now includes real backend-driven cybersecurity metrics and interactive UI elements
  */
 
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { gsap } from 'gsap'
-import { getModelStats } from '../services/api'
+import {
+  getModelStats,
+  getDatasetStats,
+  getRecentEvent,
+  getWeeklyAttacks,
+} from '../services/api'
 import StatsCard from '../components/StatsCard'
+import LiveThreatMeter from '../components/LiveThreatMeter'
+import LastIntrusionCard from '../components/LastIntrusionCard'
+import DatasetStats from '../components/DatasetStats'
+import WeeklyAttacks from '../components/WeeklyAttacks'
 
 const Home = () => {
   const [stats, setStats] = useState({
-    totalAttacks: 1250,
-    accuracy: 95.2,
-    threatsDetected: 342,
+    totalAttacks: 0,
+    accuracy: 0,
+    threatsDetected: 0,
   })
+  const [metrics, setMetrics] = useState(null)
+  const [datasetStats, setDatasetStats] = useState(null)
+  const [recentEvent, setRecentEvent] = useState(null)
+  const [weeklyAttacks, setWeeklyAttacks] = useState(null)
+  const [isLoading, setIsLoading] = useState(true)
 
   useEffect(() => {
     // GSAP hero animation
@@ -25,25 +40,82 @@ const Home = () => {
       ease: 'power3.out',
     })
     gsap.from('.hero-subtitle', {
-      opacity: 0.3,
+      opacity: 0.8,
       y: 20,
       duration: 1,
       delay: 0.3,
       ease: 'power3.out',
     })
 
-    // Load model stats
-    getModelStats()
-      .then((data) => {
-        if (data.accuracy) {
-          setStats((prev) => ({
-            ...prev,
-            accuracy: (data.accuracy * 100).toFixed(1),
-          }))
+    // Load all data from backend
+    const loadAllData = async () => {
+      setIsLoading(true)
+      try {
+        // Load all data in parallel (using allSettled so failures don't block metrics)
+        const results = await Promise.allSettled([
+          getModelStats(),
+          getDatasetStats(),
+          getRecentEvent(),
+          getWeeklyAttacks(),
+        ])
+
+        const metricsData = results[0].status === 'fulfilled' ? results[0].value : null
+        const datasetData = results[1].status === 'fulfilled' ? results[1].value : null
+        const recentData = results[2].status === 'fulfilled' ? results[2].value : null
+        const weeklyData = results[3].status === 'fulfilled' ? results[3].value : null
+
+        // Set metrics
+        setMetrics(metricsData)
+
+        // Calculate stats from metrics
+        if (metricsData) {
+          const accuracy = metricsData.accuracy ?? 0
+          const accuracyPercent = accuracy ? (accuracy * 100).toFixed(1) : 0
+
+          // Calculate total attacks from confusion matrix
+          // confusion_matrix format: [[TN, FP], [FN, TP]]
+          // Total attacks detected = FN + TP (row 1: false negatives + true positives)
+          let totalAttacks = 0
+          if (metricsData.confusion_matrix && Array.isArray(metricsData.confusion_matrix) && metricsData.confusion_matrix.length >= 2) {
+            const row1 = metricsData.confusion_matrix[1] ?? []
+            totalAttacks = (row1[0] ?? 0) + (row1[1] ?? 0)
+          }
+
+          setStats({
+            accuracy: parseFloat(accuracyPercent),
+            totalAttacks: totalAttacks,
+            threatsDetected: 0, // Will be set from dataset stats if available
+          })
         }
-      })
-      .catch((err) => console.warn('Could not load model stats:', err))
+
+        // Set dataset stats
+        setDatasetStats(datasetData)
+
+        // Set recent event
+        setRecentEvent(recentData)
+
+        // Set weekly attacks
+        setWeeklyAttacks(weeklyData)
+      } catch (error) {
+        console.error('Error loading data:', error)
+      } finally {
+        setIsLoading(false)
+      }
+    }
+
+    loadAllData()
   }, [])
+
+  // Calculate threat level percentage
+  const calculateThreatPercentage = () => {
+    if (!datasetStats) return 0
+    const totalFlows = datasetStats.total_flows_last_24h ?? 0
+    const attacks = datasetStats.attacks_last_24h ?? 0
+    if (totalFlows === 0) return 0
+    return (attacks / totalFlows) * 100
+  }
+
+  const threatPercentage = calculateThreatPercentage()
 
   return (
     <div>
@@ -82,21 +154,33 @@ const Home = () => {
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             <StatsCard
               title="Total Attacks Detected"
-              value={stats.totalAttacks.toLocaleString()}
+              value={
+                isLoading
+                  ? 'Loading...'
+                  : (stats.totalAttacks ?? 0).toLocaleString()
+              }
               icon="🚨"
               data-aos="fade-up"
               data-aos-delay="0"
             />
             <StatsCard
               title="Model Accuracy"
-              value={`${stats.accuracy}%`}
+              value={
+                isLoading
+                  ? 'Loading...'
+                  : stats.accuracy ? `${stats.accuracy}%` : 'N/A'
+              }
               icon="🎯"
               data-aos="fade-up"
               data-aos-delay="100"
             />
             <StatsCard
               title="Threats Detected Today"
-              value={stats.threatsDetected}
+              value={
+                isLoading
+                  ? 'Loading...'
+                  : (stats.threatsDetected ?? 0).toLocaleString()
+              }
               icon="⚡"
               data-aos="fade-up"
               data-aos-delay="200"
@@ -105,8 +189,102 @@ const Home = () => {
         </div>
       </section>
 
-      {/* Key Benefits */}
+      {/* Live Threat Meter & Last Intrusion Section */}
       <section className="py-16 bg-gray-50">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div data-aos="fade-up" data-aos-delay="0">
+              <LiveThreatMeter
+                threatLevel={
+                  threatPercentage >= 50
+                    ? 'HIGH'
+                    : threatPercentage >= 20
+                    ? 'MEDIUM'
+                    : 'LOW'
+                }
+                threatPercentage={threatPercentage}
+              />
+            </div>
+            <div data-aos="fade-up" data-aos-delay="100">
+              <LastIntrusionCard recentEvent={recentEvent} isLoading={isLoading} />
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* Model Performance Overview */}
+      {metrics && (
+        <section className="py-16 bg-white">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <h2 className="text-3xl font-bold text-center mb-12" data-aos="fade-up">
+              Model Performance Overview
+            </h2>
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+              <StatsCard
+                title="Accuracy"
+                value={
+                  metrics.accuracy
+                    ? `${(metrics.accuracy * 100).toFixed(2)}%`
+                    : 'N/A'
+                }
+                icon="🎯"
+                data-aos="fade-up"
+                data-aos-delay="0"
+              />
+              <StatsCard
+                title="Precision"
+                value={
+                  metrics.precision
+                    ? `${(metrics.precision * 100).toFixed(2)}%`
+                    : 'N/A'
+                }
+                icon="📊"
+                data-aos="fade-up"
+                data-aos-delay="100"
+              />
+              <StatsCard
+                title="Recall"
+                value={
+                  metrics.recall
+                    ? `${(metrics.recall * 100).toFixed(2)}%`
+                    : 'N/A'
+                }
+                icon="🔍"
+                data-aos="fade-up"
+                data-aos-delay="200"
+              />
+              <StatsCard
+                title="F1-Score"
+                value={
+                  metrics.f1
+                    ? `${(metrics.f1 * 100).toFixed(2)}%`
+                    : 'N/A'
+                }
+                icon="⭐"
+                data-aos="fade-up"
+                data-aos-delay="300"
+              />
+            </div>
+          </div>
+        </section>
+      )}
+
+      {/* Dataset Stats & Weekly Attacks Section */}
+      <section className="py-16 bg-gray-50">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div data-aos="fade-up" data-aos-delay="0">
+              <DatasetStats datasetStats={datasetStats} isLoading={isLoading} />
+            </div>
+            <div data-aos="fade-up" data-aos-delay="100">
+              <WeeklyAttacks weeklyAttacks={weeklyAttacks} isLoading={isLoading} />
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* Key Benefits */}
+      <section className="py-16 bg-white">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <h2 className="text-3xl font-bold text-center mb-12" data-aos="fade-up">
             Why Choose Jharkhand-IDS?
@@ -134,7 +312,7 @@ const Home = () => {
             ].map((benefit, idx) => (
               <div
                 key={idx}
-                className="card text-center"
+                className="card text-center hover:shadow-xl transition-shadow duration-300 rounded-xl"
                 data-aos="fade-up"
                 data-aos-delay={idx * 100}
               >
@@ -171,4 +349,3 @@ const Home = () => {
 }
 
 export default Home
-

@@ -67,7 +67,7 @@ const SampleDataViewer = () => {
             >
               Raw
             </button>
-            <button
+            {/* <button
               onClick={() => setIsRaw(false)}
               className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
                 !isRaw
@@ -76,7 +76,7 @@ const SampleDataViewer = () => {
               }`}
             >
               Processed
-            </button>
+            </button> */}
           </div>
         </div>
       </div>

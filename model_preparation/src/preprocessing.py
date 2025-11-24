@@ -13,6 +13,8 @@ from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
 import joblib
 
+from src.feature_utils import normalize_feature_name
+
 logger = logging.getLogger(__name__)
 
 
@@ -60,6 +62,7 @@ class DataPreprocessor:
             Self for method chaining.
         """
         X = X.copy()
+        X.columns = [normalize_feature_name(col) for col in X.columns]
         
         # Store feature and target column info
         if y is not None:
@@ -104,6 +107,7 @@ class DataPreprocessor:
             raise ValueError("Preprocessor must be fitted before transform")
         
         X = X.copy()
+        X.columns = [normalize_feature_name(col) for col in X.columns]
         
         # Select only the features that were used during fitting
         if self.feature_columns:

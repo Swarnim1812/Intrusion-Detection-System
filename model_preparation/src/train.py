@@ -19,6 +19,7 @@ from src.models import create_model, perform_grid_search, get_hyperparameter_gri
 from src.utils import (
     setup_logging, save_model, save_features
 )
+from src.feature_utils import normalize_feature_name
 from sklearn.utils import resample
 
 logger = logging.getLogger(__name__)
@@ -234,7 +235,7 @@ def train(config: str, fast: bool):
     
     # Feature engineering
     logger.info("Step 2: Feature Engineering")
-    feature_names = preprocessor.feature_columns
+    feature_names = [normalize_feature_name(f) for f in preprocessor.feature_columns]
     
     # Verify alignment before feature engineering
     if len(X_train_processed) != len(y_train_processed):
@@ -244,6 +245,7 @@ def train(config: str, fast: bool):
     X_train_engineered, feature_names_engineered, variance_selector, feature_selector = engineer_features(
         X_train_processed, y_train_processed, feature_names, cfg.get('feature_engineering', {})
     )
+    feature_names_engineered = [normalize_feature_name(f) for f in feature_names_engineered]
     
     # Verify alignment after feature engineering
     if len(X_train_engineered) != len(y_train_processed):

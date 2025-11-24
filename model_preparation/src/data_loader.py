@@ -14,6 +14,8 @@ import logging
 import gzip
 import json
 
+from src.feature_utils import normalize_feature_name
+
 logger = logging.getLogger(__name__)
 
 # CICIDS2017 Dataset Information
@@ -48,15 +50,14 @@ def is_cicids2017_dataset(df: pd.DataFrame) -> bool:
         True if dataset appears to be CICIDS2017 format.
     """
     cicids_indicators = [
-        'Flow ID', 'FlowID', 'flow_id',
-        'Source IP', 'SourceIP', 'src_ip',
-        'Destination IP', 'DestinationIP', 'dst_ip',
-        'Label', 'label'
+        'flow_id',
+        'source_ip',
+        'destination_ip',
+        'label',
     ]
     
-    df_columns_lower = [col.lower() for col in df.columns]
-    matches = sum(1 for indicator in cicids_indicators 
-                  if indicator.lower() in df_columns_lower)
+    df_columns_normalized = [normalize_feature_name(col) for col in df.columns]
+    matches = sum(1 for indicator in cicids_indicators if indicator in df_columns_normalized)
     
     return matches >= 2
 
@@ -201,6 +202,7 @@ def load_csv(filepath: str, detect_cicids: bool = True, **kwargs) -> pd.DataFram
                 df = pd.read_csv(filepath, **kwargs)
         
         logger.info(f"Loaded {len(df)} rows and {len(df.columns)} columns")
+        df.columns = [normalize_feature_name(col) for col in df.columns]
         
         # Auto-detect and preprocess CICIDS2017 if enabled
         if detect_cicids and is_cicids2017_dataset(df):
