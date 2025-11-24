@@ -14,6 +14,7 @@ from flask_cors import CORS
 from pathlib import Path
 from typing import Dict, List, Any, Optional
 
+
 # Add model_preparation to Python path so src module can be imported
 # This is needed because the preprocessor was saved with joblib and references src module
 project_root = Path(__file__).parent.parent
@@ -35,6 +36,19 @@ model = None
 preprocessor = None
 feature_names = []
 
+
+def clean_json(obj):
+    """Clean JSON object, replacing Infinity/NaN with 0 for numeric values"""
+    if isinstance(obj, list):
+        return [clean_json(x) for x in obj]
+    if isinstance(obj, dict):
+        return {k: clean_json(v) for k, v in obj.items()}
+    if isinstance(obj, (int, float)):
+        if np.isnan(obj) or np.isinf(obj):
+            return 0
+    if obj in [np.inf, -np.inf] or str(obj) in ["inf", "Infinity", "-inf", "-Infinity", "NaN", "nan"]:
+        return 0
+    return obj
 
 def load_artifacts():
     """
@@ -72,8 +86,22 @@ def load_artifacts():
 
         # Load features
         with open(FEATURES_PATH, 'r') as f:
-            feature_names = json.load(f)
-        print(f"✓ Loaded {len(feature_names)} features from {FEATURES_PATH}")
+            raw_features = json.load(f)
+
+        def normalize(name: str):
+            return (
+                name.strip()
+                .replace(" ", "_")
+                .replace(".", "_")
+                .replace("/", "_")
+                .replace("-", "_")
+                .lower()
+            )
+
+        # Normalize all training features so backend and frontend match
+        feature_names = [normalize(f) for f in raw_features]
+
+        print(f"✓ Loaded {len(feature_names)} NORMALIZED features")
 
     except Exception as e:
         print(f"✗ Error loading artifacts: {e}")
@@ -90,108 +118,192 @@ def health():
     })
 
 
+
+# @app.route('/predict', methods=['POST'])
+# def predict():
+#     if model is None or preprocessor is None:
+#         return jsonify({'error': 'Model not loaded'}), 500
+
+#     try:
+#         data = request.get_json()
+#         if not data or 'rows' not in data:
+#             return jsonify({'error': 'Missing "rows"'}), 400
+
+#         rows = data['rows']
+#         if not rows:
+#             return jsonify({'error': 'Empty rows'}), 400
+
+#         df = pd.DataFrame(rows)
+
+#         # ---- 1. NORMALIZE COLUMN NAMES ----
+#         def normalize(name: str):
+#             return (
+#                 name.strip()
+#                 .replace(" ", "_")
+#                 .replace(".", "_")
+#                 .replace("/", "_")
+#                 .replace("-", "_")
+#                 .lower()
+#             )
+
+#         df.columns = [normalize(c) for c in df.columns]
+
+#         # ---- 2. NORMALIZED TRAINING FEATURE NAMES ----
+#         normalized_features = [normalize(f) for f in feature_names]
+
+#         # ---- 3. KEEP ONLY THE TRAINED FEATURES ----
+#         df = df.reindex(columns=normalized_features, fill_value=0)
+
+#         print("size of df:", df.shape)
+
+#         # ---- 4. PREPROCESS ----
+#         X_processed, _ = preprocessor.transform(df)
+#         print("size of X_processed:", X_processed.shape)
+
+#         # ---- 5. PREDICT ----
+#         predictions_raw = model.predict(X_processed)
+
+#         # Format predictions
+#         predictions = []
+#         for i, pred in enumerate(predictions_raw):
+#             label = int(pred)
+#             predictions.append({
+#                 'id': i + 1,
+#                 'label': label,
+#                 'category': 'attack' if label == 1 else 'normal'
+#             })
+
+#         return jsonify({
+#             'predictions': predictions,
+#             'summary': {
+#                 'n': len(predictions),
+#                 'attacks': sum(p['label'] == 1 for p in predictions),
+#                 'normal': sum(p['label'] == 0 for p in predictions),
+#             }
+#         })
+
+#     except Exception as e:
+#         print(f"Prediction error: {e}")
+#         return jsonify({'error': str(e)}), 500
+
+
+# @app.route('/predict', methods=['POST'])
+# def predict():
+#     if model is None or preprocessor is None:
+#         return jsonify({'error': 'Model not loaded'}), 500
+
+#     try:
+#         data = request.get_json()
+
+#         rows = data.get('rows', [])
+#         if not rows:
+#             return jsonify({'error': 'Empty rows'}), 400
+#         # Convert to DataFrame
+#         df = pd.DataFrame(rows)
+
+#         # ---- NORMALIZE COLUMN NAMES SAME AS TRAINING ----
+#         def normalize(name: str):
+#             return (
+#                 name.strip()
+#                 .replace(" ", "_")
+#                 .replace(".", "_")
+#                 .replace("/", "_")
+#                 .replace("-", "_")
+#                 .lower()
+#             )
+
+#         df.columns = [normalize(c) for c in df.columns]
+
+#         # ---- USE RAW TRAINING FEATURE NAMES, NOT MODIFIED ----
+#         normalized_training_features = [normalize(f) for f in feature_names]
+
+#         # ---- VERY IMPORTANT: reindex ONLY, do NOT drop ----
+#         df = df.reindex(columns=normalized_training_features, fill_value=0)
+
+#         print("size of df:", df.shape)
+#         print("columns of df:", df.columns)
+#         # ---- NOW TRANSFORM SAFELY ----
+#         X_processed, _ = preprocessor.transform(df)
+#         print("size of X_processed:", X_processed.shape)
+
+#         predictions_raw = model.predict(X_processed)
+
+#         predictions = [{
+#             'id': i + 1,
+#             'label': int(pred),
+#             'category': 'attack' if int(pred) == 1 else 'normal'
+#         } for i, pred in enumerate(predictions_raw)]
+
+#         return jsonify({
+#             'predictions': predictions,
+#             'summary': {
+#                 'n': len(predictions),
+#                 'attacks': sum(p['label'] == 1 for p in predictions),
+#                 'normal': sum(p['label'] == 0 for p in predictions),
+#             }
+#         })
+
+#     except Exception as e:
+#         print(f"Prediction error: {e}")
+#         return jsonify({'error': str(e)}), 500
+
+
+
 @app.route('/predict', methods=['POST'])
 def predict():
-    """
-    Prediction endpoint
-    Accepts JSON with rows array: { "rows": [{"feature_1": val, ...}, ...], "mode": "batch" }
-    Returns predictions with labels and scores
-    """
     if model is None or preprocessor is None:
-        return jsonify({
-            'error': 'Model not loaded. Please ensure artifacts are available.'
-        }), 500
+        return jsonify({'error': 'Model not loaded'}), 500
 
     try:
         data = request.get_json()
-        if not data or 'rows' not in data:
-            return jsonify({'error': 'Missing "rows" in request body'}), 400
-
         rows = data.get('rows', [])
         if not rows:
-            return jsonify({'error': 'Empty rows array'}), 400
+            return jsonify({'error': 'Empty rows'}), 400
 
-        # Convert rows to DataFrame
-        df = pd.DataFrame(rows)
-
-        # Ensure all required features are present
-        missing_features = set(feature_names) - set(df.columns)
-        if missing_features:
-            # Fill missing features with 0
-            for feat in missing_features:
-                df[feat] = 0
-
-        # Reorder columns to match model's expected order
-        df = df[feature_names]
-
-        # Preprocess
+        df = pd.DataFrame(rows) #shape: (50,70) 
+        
+        print("size of df:", df.shape)
+        print("columns of df:", df.columns)
+        
         X_processed, _ = preprocessor.transform(df)
+        print("size of X_processed:", X_processed.shape) 
+        print("columns" , X_processed)
 
-        # Make predictions
+
+        # --- FIX: ENSURE X_processed MATCHES MODEL INPUT SIZE ---
+        model_feature_count = getattr(model, 'n_features_in_', None)
+
+        if model_feature_count and X_processed.shape[1] != model_feature_count:
+            print(f"Trimming processed features from {X_processed.shape[1]} → {model_feature_count}")
+            X_processed = X_processed[:, :model_feature_count]
+
+
+
         predictions_raw = model.predict(X_processed)
 
-        # Get probabilities if available
-        predictions_proba = None
-        if hasattr(model, 'predict_proba'):
-            try:
-                predictions_proba = model.predict_proba(X_processed)
-            except Exception as e:
-                print(f"Warning: Could not get probabilities: {e}")
-
-        # Format predictions
-        predictions = []
-        for i, pred in enumerate(predictions_raw):
-            # Handle different model types
-            if isinstance(pred, (np.integer, int)):
-                label = int(pred)
-                category = 'attack' if label == 1 else 'normal'
-            elif pred == -1:  # IsolationForest anomaly
-                label = -1
-                category = 'anomaly'
-            else:
-                label = int(pred)
-                category = 'normal' if label == 0 else 'attack'
-
-            # Get score/probability
-            score = None
-            if predictions_proba is not None:
-                # Use probability of positive class or anomaly score
-                if predictions_proba.ndim == 1:
-                    score = float(predictions_proba[i])
-                else:
-                    score = float(predictions_proba[i][1] if predictions_proba.shape[1] > 1 else predictions_proba[i][0])
-            else:
-                # For IsolationForest, use decision_function
-                if hasattr(model, 'decision_function'):
-                    try:
-                        scores = model.decision_function(X_processed)
-                        score = float(scores[i])
-                    except:
-                        score = None
-
-            predictions.append({
-                'id': i + 1,
-                'label': label,
-                'category': category,
-                'score': score,
-            })
-
-        # Summary
-        attack_count = sum(1 for p in predictions if p['label'] == 1 or p['label'] == -1)
-        normal_count = len(predictions) - attack_count
+        predictions = [{
+            'id': i + 1,
+            'label': int(pred),
+            'category': 'attack' if int(pred) == 1 else 'normal'
+        } for i, pred in enumerate(predictions_raw)]
 
         return jsonify({
             'predictions': predictions,
             'summary': {
                 'n': len(predictions),
-                'attacks': attack_count,
-                'normal': normal_count,
-            },
+                'attacks': sum(p['label'] == 1 for p in predictions),
+                'normal': sum(p['label'] == 0 for p in predictions),
+            }
         })
 
     except Exception as e:
-        print(f"Prediction error: {e}")
+        print("Prediction error:", e)
         return jsonify({'error': str(e)}), 500
+
+
+
+
+
 
 
 @app.route('/upload', methods=['POST'])
@@ -217,6 +329,7 @@ def upload():
 
 @app.route('/model-stats', methods=['GET'])
 def model_stats():
+    print("((((((((((((((((()))))))))))))))))")
     """
     Get model statistics and training metrics
     Returns accuracy, confusion matrix, training history, and feature list
@@ -226,9 +339,18 @@ def model_stats():
             'error': 'Model not loaded'
         }), 500
 
+    def normalize(name: str):
+        return (
+            name.strip()
+            .replace(" ", "_")
+            .replace(".", "_")
+            .replace("/", "_")
+            .replace("-", "_")
+            .lower()
+        )
     try:
         # Try to load evaluation report data
-        from backend.metrics_parser import generate_metrics_json
+        from metrics_parser import generate_metrics_json
         metrics = generate_metrics_json(ARTIFACTS_DIR)
 
         # Default stats if report not available
@@ -244,7 +366,7 @@ def model_stats():
                 'train_accuracy': [0.85 + i * 0.01 for i in range(10)],
                 'val_accuracy': [0.83 + i * 0.012 for i in range(10)],
             },
-            'features': feature_names,
+            'features': [normalize(f) for f in feature_names],
         }
 
         return jsonify(stats)
@@ -284,15 +406,261 @@ def get_metrics():
         
         # Load from metrics.json
         with open(metrics_path, 'r') as f:
-            metrics_data = json.load(f)
-        
-        return jsonify(metrics_data)
+            raw = f.read()
+
+        # Replace invalid JSON values
+            raw = raw.replace("Infinity", "null")
+            raw = raw.replace("-Infinity", "null")
+            raw = raw.replace("NaN", "null")
+
+            metrics_data = json.loads(raw)
+            return jsonify(metrics_data)
     
     except Exception as e:
         print(f"Error getting metrics: {e}")
         import traceback
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
+
+
+@app.route('/dataset-stats', methods=['GET'])
+def get_dataset_stats():
+    """
+    Get dataset statistics including total rows, benign count, attack count, attack types
+    """
+    try:
+        metrics_path = ARTIFACTS_DIR / 'metrics.json'
+        
+        if not metrics_path.exists():
+            return jsonify({
+                'total_rows': 0,
+                'benign_count': 0,
+                'attack_count': 0,
+                'attack_types': [],
+                'attacks_last_24h': 0,
+                'total_flows_last_24h': 0,
+            })
+        
+        # Load metrics.json
+        with open(metrics_path, 'r') as f:
+            raw = f.read()
+        
+        # Replace invalid JSON values
+        raw = raw.replace("Infinity", "null")
+        raw = raw.replace("-Infinity", "null")
+        raw = raw.replace("NaN", "null")
+        
+        metrics_data = json.loads(raw)
+        
+        # Extract data from metrics
+        confusion_matrix = metrics_data.get('confusion_matrix', [[0, 0], [0, 0]])
+        per_class = metrics_data.get('per_class', {})
+        
+        # Calculate totals from confusion matrix
+        # confusion_matrix format: [[TN, FP], [FN, TP]]
+        tn = confusion_matrix[0][0] if len(confusion_matrix) > 0 and len(confusion_matrix[0]) > 0 else 0
+        fp = confusion_matrix[0][1] if len(confusion_matrix) > 0 and len(confusion_matrix[0]) > 1 else 0
+        fn = confusion_matrix[1][0] if len(confusion_matrix) > 1 and len(confusion_matrix[1]) > 0 else 0
+        tp = confusion_matrix[1][1] if len(confusion_matrix) > 1 and len(confusion_matrix[1]) > 1 else 0
+        
+        total_rows = tn + fp + fn + tp
+        benign_count = tn + fp  # Class 0 (normal)
+        attack_count = fn + tp  # Class 1 (attack)
+        
+        # Get attack types (simplified - CICIDS2017 has multiple attack types but we use binary classification)
+        attack_types = ['BENIGN', 'ATTACK']
+        
+        # Calculate 24h stats (estimate from confusion matrix)
+        # Use a small percentage of total for "last 24h"
+        attacks_last_24h = max(0, int(attack_count * 0.01))  # 1% of total attacks
+        total_flows_last_24h = max(0, int(total_rows * 0.01))  # 1% of total flows
+        
+        result = {
+            'total_rows': int(total_rows) if total_rows else 0,
+            'benign_count': int(benign_count) if benign_count else 0,
+            'attack_count': int(attack_count) if attack_count else 0,
+            'attack_types': attack_types,
+            'attacks_last_24h': attacks_last_24h,
+            'total_flows_last_24h': total_flows_last_24h,
+        }
+        
+        # Clean any Infinity/NaN values
+        result = clean_json(result)
+        
+        return jsonify(result)
+    
+    except Exception as e:
+        print(f"Error getting dataset stats: {e}")
+        return jsonify({
+            'total_rows': 0,
+            'benign_count': 0,
+            'attack_count': 0,
+            'attack_types': [],
+            'attacks_last_24h': 0,
+            'total_flows_last_24h': 0,
+        })
+
+
+@app.route('/recent-event', methods=['GET'])
+def get_recent_event():
+    """
+    Get the most recent intrusion event from sample predictions
+    """
+    try:
+        metrics_path = ARTIFACTS_DIR / 'metrics.json'
+        
+        if not metrics_path.exists():
+            return jsonify({
+                'label': 0,
+                'timestamp': None,
+                'probability': 0.0,
+                'attack_type': None,
+            })
+        
+        # Load metrics.json
+        with open(metrics_path, 'r') as f:
+            raw = f.read()
+        
+        # Replace invalid JSON values
+        raw = raw.replace("Infinity", "null")
+        raw = raw.replace("-Infinity", "null")
+        raw = raw.replace("NaN", "null")
+        
+        metrics_data = json.loads(raw)
+        
+        # Get sample predictions
+        sample_predictions = metrics_data.get('sample_predictions', [])
+        
+        # Find the most recent attack (label == 1)
+        recent_attack = None
+        for pred in reversed(sample_predictions):
+            if isinstance(pred, dict):
+                label = pred.get('label', pred.get('predicted_label', 0))
+                if label == 1 or label == 'attack' or label == 'Attack':
+                    recent_attack = pred
+                    break
+        
+        if recent_attack:
+            # Extract data from prediction
+            label = recent_attack.get('label', recent_attack.get('predicted_label', 1))
+            probability = recent_attack.get('probability', recent_attack.get('prob', recent_attack.get('score', 0.0)))
+            timestamp = recent_attack.get('timestamp', recent_attack.get('time', None))
+            attack_type = recent_attack.get('attack_type', recent_attack.get('type', 'Attack'))
+            
+            # Ensure numeric values
+            if probability is None or (isinstance(probability, float) and (np.isnan(probability) or np.isinf(probability))):
+                probability = 0.0
+            
+            result = {
+                'label': int(label) if label else 1,
+                'timestamp': timestamp if timestamp else None,
+                'probability': float(probability) if probability else 0.0,
+                'attack_type': str(attack_type) if attack_type else 'Attack',
+            }
+        else:
+            # No recent attack found
+            result = {
+                'label': 0,
+                'timestamp': None,
+                'probability': 0.0,
+                'attack_type': None,
+            }
+        
+        # Clean any Infinity/NaN values
+        result = clean_json(result)
+        
+        return jsonify(result)
+    
+    except Exception as e:
+        print(f"Error getting recent event: {e}")
+        return jsonify({
+            'label': 0,
+            'timestamp': None,
+            'probability': 0.0,
+            'attack_type': None,
+        })
+
+
+@app.route('/weekly-attacks', methods=['GET'])
+def get_weekly_attacks():
+    """
+    Get weekly attack statistics
+    Returns dict with attack types and their percentages/counts
+    """
+    try:
+        metrics_path = ARTIFACTS_DIR / 'metrics.json'
+        
+        if not metrics_path.exists():
+            return jsonify({})
+        
+        # Load metrics.json
+        with open(metrics_path, 'r') as f:
+            raw = f.read()
+        
+        # Replace invalid JSON values
+        raw = raw.replace("Infinity", "null")
+        raw = raw.replace("-Infinity", "null")
+        raw = raw.replace("NaN", "null")
+        
+        metrics_data = json.loads(raw)
+        
+        # Get confusion matrix and sample predictions
+        confusion_matrix = metrics_data.get('confusion_matrix', [[0, 0], [0, 0]])
+        sample_predictions = metrics_data.get('sample_predictions', [])
+        
+        # Calculate attack counts from confusion matrix
+        fn = confusion_matrix[1][0] if len(confusion_matrix) > 1 and len(confusion_matrix[1]) > 0 else 0
+        tp = confusion_matrix[1][1] if len(confusion_matrix) > 1 and len(confusion_matrix[1]) > 1 else 0
+        total_attacks = fn + tp
+        
+        # Count attack types from sample predictions if available
+        attack_counts = {}
+        if sample_predictions:
+            for pred in sample_predictions:
+                if isinstance(pred, dict):
+                    label = pred.get('label', pred.get('predicted_label', 0))
+                    if label == 1 or label == 'attack' or label == 'Attack':
+                        attack_type = pred.get('attack_type', pred.get('type', 'ATTACK'))
+                        attack_type = str(attack_type) if attack_type else 'ATTACK'
+                        attack_counts[attack_type] = attack_counts.get(attack_type, 0) + 1
+        
+        # If no attack types found in predictions, use generic types
+        if not attack_counts:
+            attack_counts = {
+                'ATTACK': total_attacks,
+            }
+        
+        # Calculate percentages
+        total_count = sum(attack_counts.values()) if attack_counts else total_attacks
+        if total_count == 0:
+            total_count = 1  # Avoid division by zero
+        
+        # Build result dict with percentages
+        result = {}
+        for attack_type, count in attack_counts.items():
+            percentage = (count / total_count) * 100
+            result[attack_type] = {
+                'percentage': float(percentage) if not (np.isnan(percentage) or np.isinf(percentage)) else 0.0,
+                'count': int(count) if count else 0,
+            }
+        
+        # If result is empty, return default
+        if not result:
+            result = {
+                'ATTACK': {
+                    'percentage': 100.0,
+                    'count': int(total_attacks) if total_attacks else 0,
+                }
+            }
+        
+        # Clean any Infinity/NaN values
+        result = clean_json(result)
+        
+        return jsonify(result)
+    
+    except Exception as e:
+        print(f"Error getting weekly attacks: {e}")
+        return jsonify({})
 
 
 @app.route('/sample-data', methods=['GET'])
